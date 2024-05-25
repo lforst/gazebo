@@ -1,15 +1,7 @@
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react'
-import { useParams } from 'react-router-dom'
+import { lazy, Suspense, useLayoutEffect, useState } from 'react'
+import { useHistory, useParams } from 'react-router-dom'
 
-import { useBranchHasCommits } from 'services/branches'
-import { useLocationParams } from 'services/navigation'
+import { useLocationParams, useNavLinks } from 'services/navigation'
 import { useRepoOverview } from 'services/repo'
 import Icon from 'ui/Icon'
 import MultiSelect from 'ui/MultiSelect'
@@ -31,53 +23,22 @@ const Loader = () => (
   </div>
 )
 
-const useControlParams = ({ defaultBranch }) => {
-  const initialRenderDone = useRef(false)
-  const { provider, owner, repo } = useParams()
+const useControlParams = () => {
   const defaultParams = {
-    branch: defaultBranch,
     coverageStatus: [],
+    states: [],
     search: '',
   }
 
   const { params, updateParams } = useLocationParams(defaultParams)
-  let { branch: selectedBranch, coverageStatus, search } = params
+  let { coverageStatus, search } = params
 
   const paramStatesNames = coverageStatus.map((filter) => statusEnum[filter])
 
   const [selectedStates, setSelectedStates] = useState(paramStatesNames)
 
-  const { data: branchHasCommits } = useBranchHasCommits({
-    provider,
-    owner,
-    repo,
-    branch: selectedBranch,
-    opts: {
-      suspense: true,
-      enabled: !initialRenderDone.current,
-    },
-  })
-
-  useEffect(() => {
-    if (
-      branchHasCommits === false &&
-      selectedBranch !== ALL_BRANCHES &&
-      !initialRenderDone.current
-    ) {
-      initialRenderDone.current = true
-      updateParams({ branch: ALL_BRANCHES })
-    }
-  }, [branchHasCommits, selectedBranch, updateParams])
-
-  let branch = selectedBranch
-  if (branch === ALL_BRANCHES) {
-    branch = ''
-  }
-
   return {
     params,
-    branch,
-    selectedBranch,
     updateParams,
     selectedStates,
     setSelectedStates,
@@ -87,7 +48,10 @@ const useControlParams = ({ defaultBranch }) => {
 
 function CommitsTab() {
   const { setBreadcrumbs } = useCrumbs()
-  const { provider, owner, repo } = useParams()
+  const history = useHistory()
+
+  const { provider, owner, repo, branch: branchParam } = useParams()
+  const { commits } = useNavLinks()
 
   const { data: overview } = useRepoOverview({
     provider,
@@ -95,14 +59,12 @@ function CommitsTab() {
     owner,
   })
 
-  const {
-    branch,
-    selectedBranch,
-    updateParams,
-    selectedStates,
-    setSelectedStates,
-    search,
-  } = useControlParams({ defaultBranch: overview?.defaultBranch })
+  const [selectedBranch, setSelectedBranch] = useState(
+    branchParam ?? overview?.defaultBranch
+  )
+
+  const { updateParams, selectedStates, setSelectedStates, search } =
+    useControlParams()
 
   const {
     branchList,
@@ -115,10 +77,14 @@ function CommitsTab() {
     setBranchSearchTerm,
     isSearching,
   } = useCommitsTabBranchSelector({
-    passedBranch: branch,
+    passedBranch: selectedBranch,
     defaultBranch: overview?.defaultBranch,
     isAllCommits: selectedBranch === ALL_BRANCHES,
   })
+
+  if (selectedBranch === overview?.defaultBranch && !branchParam) {
+    history.push(commits.path({ branch: encodeURIComponent(selectedBranch) }))
+  }
 
   useLayoutEffect(() => {
     setBreadcrumbs([
@@ -163,7 +129,17 @@ function CommitsTab() {
                 resourceName="branch"
                 isLoading={branchListIsFetching}
                 onChange={(branch) => {
-                  updateParams({ branch: branch })
+                  setSelectedBranch(branch)
+
+                  if (branch === ALL_BRANCHES) {
+                    return history.push(commits.path())
+                  }
+
+                  history.push(
+                    commits.path({
+                      branch: encodeURIComponent(branch),
+                    })
+                  )
                 }}
                 onLoadMore={() => {
                   if (branchListHasNextPage) {
@@ -203,7 +179,7 @@ function CommitsTab() {
       </div>
       <Suspense fallback={<Loader />}>
         <CommitsTable
-          branch={branch}
+          branch={selectedBranch === ALL_BRANCHES ? '' : selectedBranch}
           coverageStatus={selectedStates?.map((state) => state?.status)}
           search={search}
         />
